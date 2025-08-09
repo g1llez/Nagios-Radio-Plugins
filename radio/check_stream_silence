@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Usage: check_stream_silence <stream_url> <silence_dbfs_threshold> <window_seconds>
+# Example: check_stream_silence https://.../stream -45 10
+# Exit codes: 0 OK, 1 WARN, 2 CRIT, 3 UNKNOWN
+
+set -euo pipefail
+
+if [ $# -lt 3 ]; then
+  echo "UNKNOWN: Usage: $0 <stream_url> <silence_dbfs_threshold> <window_seconds>"
+  exit 3
+fi
+
+STREAM_URL=$1
+THRESH_DB=$2
+WINDOW=$3
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "UNKNOWN: ffmpeg is required but not installed"
+  exit 3
+fi
+
+# Capture WINDOW seconds and run volumedetect
+# Note: -v error to reduce noise; parse from stderr
+OUT=$(ffmpeg -v error -t "$WINDOW" -i "$STREAM_URL" -af volumedetect -f null - 2>&1 || true)
+
+# Extract mean/max volume
+MEAN=$(printf "%s" "$OUT" | awk '/mean_volume:/{print $2}' | tail -1)
+MAXV=$(printf "%s" "$OUT" | awk '/max_volume:/{print $2}' | tail -1)
+
+if [ -z "$MEAN" ] || [ -z "$MAXV" ]; then
+  echo "UNKNOWN: Unable to analyze audio (no volume metrics)"
+  echo "$OUT" | tail -n 5
+  exit 3
+fi
+
+# Remove dB suffix
+MEAN_VAL=${MEAN%dB}
+MAX_VAL=${MAXV%dB}
+
+# Silence if both mean and max are below threshold
+is_silent_mean=$(awk -v a="$MEAN_VAL" -v t="$THRESH_DB" 'BEGIN{print (a<=t)?1:0}')
+is_silent_max=$(awk -v a="$MAX_VAL" -v t="$THRESH_DB" 'BEGIN{print (a<=t)?1:0}')
+
+if [ "$is_silent_mean" -eq 1 ] && [ "$is_silent_max" -eq 1 ]; then
+  echo "CRITICAL: Silence detected (mean ${MEAN_VAL}dB, max ${MAX_VAL}dB <= ${THRESH_DB}dB over ${WINDOW}s) | mean=${MEAN_VAL}dB max=${MAX_VAL}dB"
+  exit 2
+fi
+
+echo "OK: Audio present (mean ${MEAN_VAL}dB, max ${MAX_VAL}dB) | mean=${MEAN_VAL}dB max=${MAX_VAL}dB"
+exit 0
