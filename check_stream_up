@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# Usage: check_stream_up <stream_url>
+# Exit codes: 0 OK, 1 WARN (not used), 2 CRIT, 3 UNKNOWN
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "UNKNOWN: Usage: $0 <stream_url>"
+  exit 3
+fi
+
+STREAM_URL=$1
+
+# Fetch headers
+HEADERS=$(curl -sI --max-time 10 "$STREAM_URL" || true)
+if [ -z "$HEADERS" ]; then
+  echo "CRITICAL: No response from $STREAM_URL"
+  exit 2
+fi
+
+STATUS=$(printf "%s" "$HEADERS" | awk 'NR==1{print $2}')
+CTYPE=$(printf "%s" "$HEADERS" | tr -d '\r' | awk -F': ' 'BEGIN{IGNORECASE=1}/^Content-Type:/{print $2; exit}')
+
+if [ "$STATUS" != "200" ] && [ "$STATUS" != "206" ]; then
+  echo "CRITICAL: HTTP status $STATUS from $STREAM_URL"
+  exit 2
+fi
+
+echo "$CTYPE" | grep -qiE '^audio/|mpegurl|x-mpegurl' || {
+  echo "CRITICAL: Unexpected Content-Type '$CTYPE' from $STREAM_URL"
+  exit 2
+}
+
+# OK
+echo "OK: Stream up ($STATUS, $CTYPE) | status=$STATUS content_type=\"$CTYPE\""
+exit 0
