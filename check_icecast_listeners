@@ -1,0 +1,76 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# Nagios Plugin : check_icecast_listeners
+#
+# Monitore les statistiques d'un serveur Icecast via status.xsl
+# Extrait : Current Listeners, Peak Listeners, Bitrate
+#
+# Usage: check_icecast_listeners <URL> [warn_listeners] [crit_listeners]
+# Exemple: check_icecast_listeners http://stream.statsradio.com:8118/status.xsl 50 100
+# -----------------------------------------------------------------------------
+
+URL="$1"
+WARN_LISTENERS="${2:-80}"
+CRIT_LISTENERS="${3:-100}"
+
+# Validation des paramètres
+if [ -z "$URL" ]; then
+    echo "UNKNOWN: URL manquante | current_listeners=0 peak_listeners=0 bitrate=0"
+    exit 3
+fi
+
+# Récupération des données XML
+TMPFILE=$(mktemp)
+curl -s --connect-timeout 10 --max-time 15 "$URL" > "$TMPFILE" 2>/dev/null
+CURL_EXIT=$?
+
+if [ $CURL_EXIT -ne 0 ]; then
+    echo "CRITICAL: Impossible de récupérer $URL (curl exit: $CURL_EXIT) | current_listeners=0 peak_listeners=0 bitrate=0"
+    rm -f "$TMPFILE"
+    exit 2
+fi
+
+# Vérification que le contenu contient du XML Icecast
+if ! grep -q "Current Listeners" "$TMPFILE"; then
+    echo "CRITICAL: Réponse invalide - pas de données Icecast | current_listeners=0 peak_listeners=0 bitrate=0"
+    rm -f "$TMPFILE"
+    exit 2
+fi
+
+# Extraction des métriques avec regex pour HTML sur une ligne
+CURRENT_LISTENERS=$(grep -o 'Current Listeners:</td><td class="streamdata">[^<]*' "$TMPFILE" | sed 's/.*>//')
+PEAK_LISTENERS=$(grep -o 'Peak Listeners:</td><td class="streamdata">[^<]*' "$TMPFILE" | sed 's/.*>//')
+BITRATE=$(grep -o 'Bitrate:</td><td class="streamdata">[^<]*' "$TMPFILE" | sed 's/.*>//')
+STREAM_TITLE=$(grep -o 'Stream Title:</td><td class="streamdata">[^<]*' "$TMPFILE" | sed 's/.*>//')
+
+rm -f "$TMPFILE"
+
+# Validation des données numériques
+if ! [[ "$CURRENT_LISTENERS" =~ ^[0-9]+$ ]]; then
+    CURRENT_LISTENERS=0
+fi
+
+if ! [[ "$PEAK_LISTENERS" =~ ^[0-9]+$ ]]; then
+    PEAK_LISTENERS=0
+fi
+
+if ! [[ "$BITRATE" =~ ^[0-9]+$ ]]; then
+    BITRATE=0
+fi
+
+# Évaluation des seuils
+STATUS="OK"
+EXITCODE=0
+
+if [ "$CURRENT_LISTENERS" -ge "$CRIT_LISTENERS" ]; then
+    STATUS="CRITICAL"
+    EXITCODE=2
+elif [ "$CURRENT_LISTENERS" -ge "$WARN_LISTENERS" ]; then
+    STATUS="WARNING"
+    EXITCODE=1
+fi
+
+# Sortie Nagios avec perfdata standardisé
+echo "$STATUS: Icecast - $CURRENT_LISTENERS/$PEAK_LISTENERS listeners, ${BITRATE}kbps | current_listeners=$CURRENT_LISTENERS peak_listeners=$PEAK_LISTENERS bitrate=$BITRATE"
+
+exit $EXITCODE

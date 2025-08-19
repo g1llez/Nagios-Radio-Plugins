@@ -17,7 +17,7 @@ THRESH_DB=$2
 WINDOW=$3
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "UNKNOWN: ffmpeg is required but not installed"
+  echo "UNKNOWN: ffmpeg is required but not installed | mean=0 max=0"
   exit 3
 fi
 
@@ -32,7 +32,7 @@ MEAN_NUM=$(printf "%s" "$OUT" | grep -Eo 'mean_volume:\s*-?[0-9]+(\.[0-9]+)? dB'
 MAX_NUM=$(printf "%s" "$OUT" | grep -Eo 'max_volume:\s*-?[0-9]+(\.[0-9]+)? dB'  | tail -1 | awk '{print $2}')
 
 if [ -z "${MEAN_NUM:-}" ] || [ -z "${MAX_NUM:-}" ]; then
-  echo "UNKNOWN: Unable to analyze audio (no volume metrics)"
+  echo "UNKNOWN: Unable to analyze audio (no volume metrics) | mean=0 max=0"
   printf "%s\n" "$OUT" | tail -n 15
   exit 3
 fi
